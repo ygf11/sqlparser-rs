@@ -3261,8 +3261,16 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse an INSERT statement
     pub fn parse_insert(&mut self) -> Result<Statement, ParserError> {
+        self.parse_insert_with_options(false)
+    }
+
+    pub fn parse_insert_without_values(&mut self) -> Result<Statement, ParserError> {
+        self.parse_insert_with_options(true)
+    }
+
+    /// Parse an INSERT statement
+    fn parse_insert_with_options(&mut self, skip_values: bool) -> Result<Statement, ParserError> {
         let or = if !dialect_of!(self is SQLiteDialect) {
             None
         } else if self.parse_keywords(&[Keyword::OR, Keyword::REPLACE]) {
@@ -3340,7 +3348,26 @@ impl<'a> Parser<'a> {
             let source = if format.is_some() {
                 None
             } else {
-                Some(Box::new(self.parse_query()?))
+                // Values && skip_values == false =>
+                if self.parse_keyword(Keyword::VALUES) {
+                    let values = if !skip_values {
+                        SetExpr::Values(self.parse_values()?)
+                    } else {
+                        self.prev_token();
+                        SetExpr::Values(Values(vec![]))
+                    };
+                    // let set_expr = SetExpr::Values(self.parse_values()?);
+                    Some(Box::new(Query {
+                        with: None,
+                        body: values,
+                        order_by: vec![],
+                        limit: None,
+                        offset: None,
+                        fetch: None,
+                    }))
+                } else {
+                    Some(Box::new(self.parse_query()?))
+                }
             };
 
             let on = if self.parse_keyword(Keyword::ON) {
