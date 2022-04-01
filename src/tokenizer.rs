@@ -245,6 +245,20 @@ pub struct TokenWithPosition {
     end: QueryOffset,
 }
 
+impl TokenWithPosition {
+    fn create_values_token(token: Token, start: QueryOffset, end: QueryOffset) -> Self {
+        TokenWithPosition { token, start, end }
+    }
+
+    fn create_semi_colon(start: QueryOffset, end: QueryOffset) -> Self {
+        TokenWithPosition {
+            token: Token::SemiColon,
+            start,
+            end,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum QueryOffset {
     Normal(u64),
@@ -902,7 +916,7 @@ mod tests {
         let sql = String::from("SELECT 1");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
 
         let expected = vec![
             Token::make_keyword("SELECT"),
@@ -911,6 +925,7 @@ mod tests {
         ];
 
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -918,7 +933,7 @@ mod tests {
         let sql = String::from("SELECT .1");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
 
         let expected = vec![
             Token::make_keyword("SELECT"),
@@ -927,6 +942,7 @@ mod tests {
         ];
 
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -934,7 +950,7 @@ mod tests {
         let sql = String::from("SELECT sqrt(1)");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
 
         let expected = vec![
             Token::make_keyword("SELECT"),
@@ -946,6 +962,7 @@ mod tests {
         ];
 
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -953,7 +970,7 @@ mod tests {
         let sql = String::from("SELECT 'a' || 'b'");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
 
         let expected = vec![
             Token::make_keyword("SELECT"),
@@ -966,13 +983,14 @@ mod tests {
         ];
 
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
     #[test]
     fn tokenize_bitwise_op() {
         let sql = String::from("SELECT one | two ^ three");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
 
         let expected = vec![
             Token::make_keyword("SELECT"),
@@ -987,7 +1005,9 @@ mod tests {
             Token::Whitespace(Whitespace::Space),
             Token::make_word("three", None),
         ];
+
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -996,7 +1016,7 @@ mod tests {
             String::from("SELECT true XOR true, false XOR false, true XOR false, false XOR true");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
 
         let expected = vec![
             Token::make_keyword("SELECT"),
@@ -1028,7 +1048,9 @@ mod tests {
             Token::Whitespace(Whitespace::Space),
             Token::make_keyword("true"),
         ];
+
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1036,7 +1058,7 @@ mod tests {
         let sql = String::from("SELECT * FROM customer WHERE id = 1 LIMIT 5");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
 
         let expected = vec![
             Token::make_keyword("SELECT"),
@@ -1061,6 +1083,7 @@ mod tests {
         ];
 
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1068,7 +1091,7 @@ mod tests {
         let sql = String::from("EXPLAIN SELECT * FROM customer WHERE id = 1");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
 
         let expected = vec![
             Token::make_keyword("EXPLAIN"),
@@ -1091,6 +1114,7 @@ mod tests {
         ];
 
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1098,7 +1122,7 @@ mod tests {
         let sql = String::from("EXPLAIN ANALYZE SELECT * FROM customer WHERE id = 1");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
 
         let expected = vec![
             Token::make_keyword("EXPLAIN"),
@@ -1123,6 +1147,7 @@ mod tests {
         ];
 
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1130,7 +1155,7 @@ mod tests {
         let sql = String::from("SELECT * FROM customer WHERE salary != 'Not Provided'");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
 
         let expected = vec![
             Token::make_keyword("SELECT"),
@@ -1151,6 +1176,7 @@ mod tests {
         ];
 
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1159,7 +1185,7 @@ mod tests {
 
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         // println!("tokens: {:#?}", tokens);
         let expected = vec![
             Token::Whitespace(Whitespace::Newline),
@@ -1171,6 +1197,7 @@ mod tests {
             Token::make_word("h", None),
         ];
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1179,9 +1206,10 @@ mod tests {
 
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         let expected = vec![Token::SingleQuotedString("foo\r\nbar\nbaz".to_string())];
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1206,7 +1234,7 @@ mod tests {
 
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         // println!("tokens: {:#?}", tokens);
         let expected = vec![
             Token::Whitespace(Whitespace::Newline),
@@ -1226,7 +1254,9 @@ mod tests {
             Token::Char('ى'),
             Token::make_word("h", None),
         ];
+
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1234,7 +1264,7 @@ mod tests {
         let sql = String::from("FUNCTION(key=>value)");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         let expected = vec![
             Token::make_word("FUNCTION", None),
             Token::LParen,
@@ -1243,7 +1273,9 @@ mod tests {
             Token::make_word("value", None),
             Token::RParen,
         ];
+
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1251,7 +1283,7 @@ mod tests {
         let sql = String::from("a IS NULL");
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
 
         let expected = vec![
             Token::make_word("a", None),
@@ -1262,6 +1294,7 @@ mod tests {
         ];
 
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1270,7 +1303,7 @@ mod tests {
 
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         let expected = vec![
             Token::Number("0".to_string(), false),
             Token::Whitespace(Whitespace::SingleLineComment {
@@ -1279,7 +1312,9 @@ mod tests {
             }),
             Token::Number("1".to_string(), false),
         ];
+
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1288,12 +1323,14 @@ mod tests {
 
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         let expected = vec![Token::Whitespace(Whitespace::SingleLineComment {
             prefix: "--".to_string(),
             comment: "this is a comment".to_string(),
         })];
+
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1302,7 +1339,7 @@ mod tests {
 
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         let expected = vec![
             Token::Number("0".to_string(), false),
             Token::Whitespace(Whitespace::MultiLineComment(
@@ -1310,7 +1347,9 @@ mod tests {
             )),
             Token::Number("1".to_string(), false),
         ];
+
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1319,13 +1358,15 @@ mod tests {
 
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         let expected = vec![
             Token::Whitespace(Whitespace::Newline),
             Token::Whitespace(Whitespace::MultiLineComment("* Comment *".to_string())),
             Token::Whitespace(Whitespace::Newline),
         ];
+
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1350,7 +1391,7 @@ mod tests {
 
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         let expected = vec![
             Token::make_word("line1", None),
             Token::Whitespace(Whitespace::Newline),
@@ -1361,7 +1402,9 @@ mod tests {
             Token::make_word("line4", None),
             Token::Whitespace(Whitespace::Newline),
         ];
+
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1370,7 +1413,7 @@ mod tests {
 
         let dialect = SnowflakeDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         let expected = vec![
             Token::make_word("list", None),
             Token::Whitespace(Whitespace::Space),
@@ -1379,18 +1422,21 @@ mod tests {
             Token::make_word("d", None),
         ];
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
 
         let sql = String::from("list @abc/e/f/g");
 
         let dialect = SnowflakeDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, &sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         let expected = vec![
             Token::make_word("list", None),
             Token::Whitespace(Whitespace::Space),
             Token::AtString("abc/e/f/g".to_string()),
         ];
+
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1398,7 +1444,7 @@ mod tests {
         let sql = "SELECT TOP 5 [bar] FROM foo";
         let dialect = MsSqlDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         let expected = vec![
             Token::make_keyword("SELECT"),
             Token::Whitespace(Whitespace::Space),
@@ -1413,6 +1459,7 @@ mod tests {
             Token::make_word("foo", None),
         ];
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
     }
 
     #[test]
@@ -1420,7 +1467,7 @@ mod tests {
         let sql = "SELECT col ~ '^a', col ~* '^a', col !~ '^a', col !~* '^a'";
         let dialect = GenericDialect {};
         let mut tokenizer = Tokenizer::new(&dialect, sql);
-        let (tokens, _) = tokenizer.tokenize().unwrap();
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
         let expected = vec![
             Token::make_keyword("SELECT"),
             Token::Whitespace(Whitespace::Space),
@@ -1451,7 +1498,194 @@ mod tests {
             Token::Whitespace(Whitespace::Space),
             Token::SingleQuotedString("^a".into()),
         ];
+
         compare(expected, tokens);
+        assert_eq!(pos_map, HashMap::default());
+    }
+
+    #[test]
+    fn tokenize_simple_values_position() {
+        let sql = "values (1,2,3)";
+        let dialect = GenericDialect {};
+        let mut tokenizer = Tokenizer::new(&dialect, sql);
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
+        let expected = vec![
+            Token::make_keyword("values"),
+            Token::Whitespace(Whitespace::Space),
+            Token::LParen,
+            Token::Number(String::from("1"), false),
+            Token::Comma,
+            Token::Number(String::from("2"), false),
+            Token::Comma,
+            Token::Number(String::from("3"), false),
+            Token::RParen,
+        ];
+
+        compare(expected, tokens);
+        let expected_pos_map: HashMap<usize, TokenWithPosition> = HashMap::from([(
+            0,
+            TokenWithPosition::create_values_token(
+                Token::make_word("values", None),
+                QueryOffset::Normal(0),
+                QueryOffset::Normal(6),
+            ),
+        )]);
+        assert_eq!(pos_map, expected_pos_map);
+    }
+
+    #[test]
+    fn tokenize_space_start_values_position() {
+        let sql = " values (1,2,3)";
+        let dialect = GenericDialect {};
+        let mut tokenizer = Tokenizer::new(&dialect, sql);
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
+        let expected = vec![
+            Token::Whitespace(Whitespace::Space),
+            Token::make_keyword("values"),
+            Token::Whitespace(Whitespace::Space),
+            Token::LParen,
+            Token::Number(String::from("1"), false),
+            Token::Comma,
+            Token::Number(String::from("2"), false),
+            Token::Comma,
+            Token::Number(String::from("3"), false),
+            Token::RParen,
+        ];
+
+        compare(expected, tokens);
+        let expected_pos_map: HashMap<usize, TokenWithPosition> = HashMap::from([(
+            1,
+            TokenWithPosition::create_values_token(
+                Token::make_keyword("values"),
+                QueryOffset::Normal(1),
+                QueryOffset::Normal(7),
+            ),
+        )]);
+        assert_eq!(pos_map, expected_pos_map);
+    }
+
+    #[test]
+    fn tokenize_semi_colon_position() {
+        let sql = "insert ; (1)";
+        let dialect = GenericDialect {};
+        let mut tokenizer = Tokenizer::new(&dialect, sql);
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
+        let expected = vec![
+            Token::make_keyword("insert"),
+            Token::Whitespace(Whitespace::Space),
+            Token::SemiColon,
+            Token::Whitespace(Whitespace::Space),
+            Token::LParen,
+            Token::Number(String::from("1"), false),
+            Token::RParen,
+        ];
+
+        compare(expected, tokens);
+        let expected_pos_map: HashMap<usize, TokenWithPosition> = HashMap::from([(
+            2,
+            TokenWithPosition::create_semi_colon(QueryOffset::Normal(7), QueryOffset::Normal(8)),
+        )]);
+        assert_eq!(pos_map, expected_pos_map);
+    }
+
+    #[test]
+    fn tokenize_values_end_position() {
+        let sql = "insert into () values";
+        let dialect = GenericDialect {};
+        let mut tokenizer = Tokenizer::new(&dialect, sql);
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
+        let expected = vec![
+            Token::make_keyword("insert"),
+            Token::Whitespace(Whitespace::Space),
+            Token::make_word("into", None),
+            Token::Whitespace(Whitespace::Space),
+            Token::LParen,
+            Token::RParen,
+            Token::Whitespace(Whitespace::Space),
+            Token::make_keyword("values"),
+        ];
+
+        compare(expected, tokens);
+        let expected_pos_map: HashMap<usize, TokenWithPosition> = HashMap::from([(
+            7,
+            TokenWithPosition::create_values_token(
+                Token::make_keyword("values"),
+                QueryOffset::Normal(15),
+                QueryOffset::EOF,
+            ),
+        )]);
+        assert_eq!(pos_map, expected_pos_map);
+    }
+
+    #[test]
+    fn tokenize_semi_colon_end_position() {
+        let sql = "insert into () ;";
+        let dialect = GenericDialect {};
+        let mut tokenizer = Tokenizer::new(&dialect, sql);
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
+        let expected = vec![
+            Token::make_keyword("insert"),
+            Token::Whitespace(Whitespace::Space),
+            Token::make_word("into", None),
+            Token::Whitespace(Whitespace::Space),
+            Token::LParen,
+            Token::RParen,
+            Token::Whitespace(Whitespace::Space),
+            Token::SemiColon,
+        ];
+
+        compare(expected, tokens);
+        let expected_pos_map: HashMap<usize, TokenWithPosition> = HashMap::from([(
+            7,
+            TokenWithPosition::create_semi_colon(QueryOffset::Normal(15), QueryOffset::EOF),
+        )]);
+        assert_eq!(pos_map, expected_pos_map);
+    }
+
+    #[test]
+    fn tokenize_semi_colon_and_values_position() {
+        let sql = "insert into t values (1); select 1";
+        let dialect = GenericDialect {};
+        let mut tokenizer = Tokenizer::new(&dialect, sql);
+        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
+        let expected = vec![
+            Token::make_keyword("insert"),
+            Token::Whitespace(Whitespace::Space),
+            Token::make_keyword("into"),
+            Token::Whitespace(Whitespace::Space),
+            Token::make_word("t", None),
+            Token::Whitespace(Whitespace::Space),
+            Token::make_keyword("values"),
+            Token::Whitespace(Whitespace::Space),
+            Token::LParen,
+            Token::Number(String::from("1"), false),
+            Token::RParen,
+            Token::SemiColon,
+            Token::Whitespace(Whitespace::Space),
+            Token::make_keyword("select"),
+            Token::Whitespace(Whitespace::Space),
+            Token::Number(String::from("1"), false),
+        ];
+
+        compare(expected, tokens);
+        let expected_pos_map: HashMap<usize, TokenWithPosition> = HashMap::from([
+            (
+                6,
+                TokenWithPosition::create_values_token(
+                    Token::make_keyword("values"),
+                    QueryOffset::Normal(14),
+                    QueryOffset::Normal(20),
+                ),
+            ),
+            (
+                11,
+                TokenWithPosition::create_semi_colon(
+                    QueryOffset::Normal(24),
+                    QueryOffset::Normal(25),
+                ),
+            ),
+        ]);
+        assert_eq!(pos_map, expected_pos_map);
     }
 
     fn compare(expected: Vec<Token>, actual: Vec<Token>) {
