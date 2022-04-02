@@ -238,32 +238,6 @@ pub struct Word {
     /// this will have one of the values from dialect::keywords, otherwise empty
     pub keyword: Keyword,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TokenWithPosition {
-    token: Token,
-    start: QueryOffset,
-    end: QueryOffset,
-}
-
-impl TokenWithPosition {
-    fn create_values_token(token: Token, start: QueryOffset, end: QueryOffset) -> Self {
-        TokenWithPosition { token, start, end }
-    }
-
-    fn create_semi_colon(start: QueryOffset, end: QueryOffset) -> Self {
-        TokenWithPosition {
-            token: Token::SemiColon,
-            start,
-            end,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum QueryOffset {
-    Normal(u64),
-    EOF,
-}
 
 impl fmt::Display for Word {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -331,6 +305,48 @@ impl fmt::Display for TokenizerError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for TokenizerError {}
+
+/// The token's position in query.
+/// Start contains the left char, and end does not contains char.
+/// For example, `Insert into values (1,2,3)`
+/// `Insert`'s position is [0, 6).
+/// `into`'s position is [7, 11).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TokenWithPosition {
+    pub token: Token,
+    pub start: QueryOffset,
+    pub end: QueryOffset,
+}
+
+impl TokenWithPosition {
+    fn create_values_token(token: Token, start: QueryOffset, end: QueryOffset) -> Self {
+        TokenWithPosition { token, start, end }
+    }
+
+    fn create_semi_colon(start: QueryOffset, end: QueryOffset) -> Self {
+        TokenWithPosition {
+            token: Token::SemiColon,
+            start,
+            end,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum QueryOffset {
+    Normal(u64),
+    EOF,
+}
+
+impl fmt::Display for QueryOffset {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            QueryOffset::Normal(offset) => write!(f, "{}", offset),
+            QueryOffset::EOF => write!(f, "eof"),
+        }
+    }
+}
 
 /// SQL Tokenizer
 pub struct Tokenizer<'a> {
@@ -533,7 +549,18 @@ impl<'a> Tokenizer<'a> {
                     }
                     // punctuation
                     '(' => self.consume_and_return(chars, Token::LParen),
-                    ')' => self.consume_and_return(chars, Token::RParen),
+                    ')' => {
+                        let token = Token::RParen;
+                        let _ = chars.next();
+                        Self::save_token_position(
+                            position_map,
+                            &token,
+                            token_idx,
+                            chars,
+                            pos as u64,
+                        );
+                        Ok(Some(token))
+                    }
                     ',' => self.consume_and_return(chars, Token::Comma),
                     // operators
                     '-' => {
@@ -844,7 +871,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     /// Save token-idx to its position in a map.
-    /// Current only support save Values and SemiColon.
+    /// Current only support save Values.
     fn save_token_position(
         position_map: &mut HashMap<usize, TokenWithPosition>,
         token: &Token,
@@ -852,7 +879,7 @@ impl<'a> Tokenizer<'a> {
         chars: &mut Peekable<CharIndices<'_>>,
         token_start: u64,
     ) {
-        if token == &Token::SemiColon
+        if token == &Token::RParen
             || matches!(token, Token::Word(w) if w.keyword == Keyword::VALUES)
         {
             let end = chars
@@ -1565,30 +1592,6 @@ mod tests {
     }
 
     #[test]
-    fn tokenize_semi_colon_position() {
-        let sql = "insert ; (1)";
-        let dialect = GenericDialect {};
-        let mut tokenizer = Tokenizer::new(&dialect, sql);
-        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
-        let expected = vec![
-            Token::make_keyword("insert"),
-            Token::Whitespace(Whitespace::Space),
-            Token::SemiColon,
-            Token::Whitespace(Whitespace::Space),
-            Token::LParen,
-            Token::Number(String::from("1"), false),
-            Token::RParen,
-        ];
-
-        compare(expected, tokens);
-        let expected_pos_map: HashMap<usize, TokenWithPosition> = HashMap::from([(
-            2,
-            TokenWithPosition::create_semi_colon(QueryOffset::Normal(7), QueryOffset::Normal(8)),
-        )]);
-        assert_eq!(pos_map, expected_pos_map);
-    }
-
-    #[test]
     fn tokenize_values_end_position() {
         let sql = "insert into () values";
         let dialect = GenericDialect {};
@@ -1613,31 +1616,6 @@ mod tests {
                 QueryOffset::Normal(15),
                 QueryOffset::EOF,
             ),
-        )]);
-        assert_eq!(pos_map, expected_pos_map);
-    }
-
-    #[test]
-    fn tokenize_semi_colon_end_position() {
-        let sql = "insert into () ;";
-        let dialect = GenericDialect {};
-        let mut tokenizer = Tokenizer::new(&dialect, sql);
-        let (tokens, pos_map) = tokenizer.tokenize().unwrap();
-        let expected = vec![
-            Token::make_keyword("insert"),
-            Token::Whitespace(Whitespace::Space),
-            Token::make_word("into", None),
-            Token::Whitespace(Whitespace::Space),
-            Token::LParen,
-            Token::RParen,
-            Token::Whitespace(Whitespace::Space),
-            Token::SemiColon,
-        ];
-
-        compare(expected, tokens);
-        let expected_pos_map: HashMap<usize, TokenWithPosition> = HashMap::from([(
-            7,
-            TokenWithPosition::create_semi_colon(QueryOffset::Normal(15), QueryOffset::EOF),
         )]);
         assert_eq!(pos_map, expected_pos_map);
     }
@@ -1668,23 +1646,14 @@ mod tests {
         ];
 
         compare(expected, tokens);
-        let expected_pos_map: HashMap<usize, TokenWithPosition> = HashMap::from([
-            (
-                6,
-                TokenWithPosition::create_values_token(
-                    Token::make_keyword("values"),
-                    QueryOffset::Normal(14),
-                    QueryOffset::Normal(20),
-                ),
+        let expected_pos_map: HashMap<usize, TokenWithPosition> = HashMap::from([(
+            6,
+            TokenWithPosition::create_values_token(
+                Token::make_keyword("values"),
+                QueryOffset::Normal(14),
+                QueryOffset::Normal(20),
             ),
-            (
-                11,
-                TokenWithPosition::create_semi_colon(
-                    QueryOffset::Normal(24),
-                    QueryOffset::Normal(25),
-                ),
-            ),
-        ]);
+        )]);
         assert_eq!(pos_map, expected_pos_map);
     }
 

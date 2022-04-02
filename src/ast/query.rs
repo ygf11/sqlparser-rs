@@ -17,6 +17,7 @@ use alloc::{boxed::Box, vec::Vec};
 use serde::{Deserialize, Serialize};
 
 use crate::ast::*;
+use crate::tokenizer::QueryOffset;
 
 /// The most complete variant of a `SELECT` query expression, optionally
 /// including `WITH`, `UNION` / other set operations, and `ORDER BY`.
@@ -77,7 +78,7 @@ pub enum SetExpr {
         left: Box<SetExpr>,
         right: Box<SetExpr>,
     },
-    Values(Values),
+    Values(StreamValues),
     Insert(Statement),
     // TODO: ANSI SQL supports `TABLE` here.
 }
@@ -598,11 +599,77 @@ impl fmt::Display for Top {
     }
 }
 
+// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+// pub struct Values(pub Vec<Vec<Expr>>);
+
+// impl fmt::Display for Values {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         write!(f, "VALUES ")?;
+//         let mut delim = "";
+//         for row in &self.0 {
+//             write!(f, "{}", delim)?;
+//             delim = ", ";
+//             write!(f, "({})", display_comma_separated(row))?;
+//         }
+//         Ok(())
+//     }
+// }
+
+// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+// pub enum Values {
+//     Exprs(Vec<Vec<Expr>>),
+//     QuerySlice((QueryOffset, QueryOffset)),
+// }
+
+// impl fmt::Display for Values {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         write!(f, "VALUES ")?;
+//         match self {
+//             Values::Exprs(values_expr) => {
+//                 let mut delim = "";
+//                 for row in values_expr.iter() {
+//                     write!(f, "{}", delim)?;
+//                     delim = ", ";
+//                     write!(f, "({})", display_comma_separated(row))?;
+//                 }
+//             }
+//             Values::QuerySlice((start, end)) => {
+//                 write!(f, "({}", start)?;
+//                 write!(f, ", {})", end)?;
+//             }
+//         };
+
+//         Ok(())
+//     }
+// }
+
+// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+// pub enum Values {
+//     Exprs(Vec<Vec<Expr>>),
+//     QuerySlice((QueryOffset, QueryOffset)),
+// }
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Values(pub Vec<Vec<Expr>>);
+pub struct StreamValues {
+    pub start: QueryOffset,
+    pub end: QueryOffset,
+}
 
-impl fmt::Display for Values {
+pub struct ExprValues(pub Vec<Vec<Expr>>);
+
+impl fmt::Display for StreamValues {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "VALUES query[{},{}]", self.start, self.end)?;
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for ExprValues {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "VALUES ")?;
         let mut delim = "";

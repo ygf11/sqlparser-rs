@@ -24,6 +24,7 @@ use sqlparser::ast::Expr::{Identifier, MapAccess};
 use sqlparser::ast::*;
 use sqlparser::dialect::{GenericDialect, PostgreSqlDialect};
 use sqlparser::parser::ParserError;
+use sqlparser::tokenizer::QueryOffset;
 
 #[test]
 fn parse_create_table_with_defaults() {
@@ -528,8 +529,8 @@ fn parse_execute() {
 
 #[test]
 fn parse_prepare() {
-    let stmt =
-        pg_and_generic().verified_stmt("PREPARE a AS INSERT INTO customers VALUES (a1, a2, a3)");
+    let query = "PREPARE a AS INSERT INTO customers VALUES (a1, a2, a3)";
+    let stmt = pg_and_generic().verified_stmt(query);
     let sub_stmt = match stmt {
         Statement::Prepare {
             name,
@@ -554,15 +555,18 @@ fn parse_prepare() {
             assert_eq!(table_name.to_string(), "customers");
             assert!(columns.is_empty());
 
-            let expected_values = [vec![
-                Expr::Identifier("a1".into()),
-                Expr::Identifier("a2".into()),
-                Expr::Identifier("a3".into()),
-            ]];
+            let expected_values = "VALUES (a1, a2, a3)";
             match &source {
                 Some(source) => match &source.body {
-                    SetExpr::Values(Values(values)) => {
-                        assert_eq!(values.as_slice(), &expected_values)
+                    SetExpr::Values(values) => {
+                        let values = match (values.start, values.end) {
+                            (QueryOffset::Normal(start), QueryOffset::Normal(end)) => {
+                                &query[start as usize..=end as usize]
+                            }
+                            _ => unreachable!(),
+                        };
+
+                        assert_eq!(values, expected_values)
                     }
                     _ => unreachable!(),
                 },

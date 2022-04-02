@@ -22,6 +22,7 @@ use test_utils::*;
 use sqlparser::ast::*;
 use sqlparser::dialect::{GenericDialect, MySqlDialect};
 use sqlparser::tokenizer::Token;
+use sqlparser::tokenizer::QueryOffset;
 
 #[test]
 fn parse_identifiers() {
@@ -317,16 +318,10 @@ fn parse_insert_with_on_duplicate_update() {
             assert_eq!(
                 Some(Box::new(Query {
                     with: None,
-                    body: SetExpr::Values(Values(vec![vec![
-                        Expr::Value(Value::SingleQuotedString("accounting_manager".to_string())),
-                        Expr::Value(Value::SingleQuotedString(
-                            "Some description about the group".to_string()
-                        )),
-                        Expr::Value(Value::Boolean(true)),
-                        Expr::Value(Value::Boolean(true)),
-                        Expr::Value(Value::Boolean(true)),
-                        Expr::Value(Value::Boolean(true)),
-                    ]])),
+                    body: SetExpr::Values(StreamValues {
+                        start: QueryOffset::Normal(0),
+                        end: QueryOffset::Normal(10),
+                    }),
                     order_by: vec![],
                     limit: None,
                     offset: None,

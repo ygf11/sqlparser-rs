@@ -23,6 +23,7 @@ use alloc::{
 use core::fmt;
 
 use log::debug;
+use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::dialect::*;
@@ -109,23 +110,30 @@ pub struct Parser<'a> {
     /// The index of the first unprocessed token in `self.tokens`
     index: usize,
     dialect: &'a dyn Dialect,
+    // The token-idx -> (token, position in query) map
+    position_map: HashMap<usize, TokenWithPosition>,
 }
 
 impl<'a> Parser<'a> {
     /// Parse the specified tokens
-    pub fn new(tokens: Vec<Token>, dialect: &'a dyn Dialect) -> Self {
+    pub fn new(
+        tokens: Vec<Token>,
+        dialect: &'a dyn Dialect,
+        position_map: HashMap<usize, TokenWithPosition>,
+    ) -> Self {
         Parser {
             tokens,
             index: 0,
             dialect,
+            position_map,
         }
     }
 
     /// Parse a SQL statement and produce an Abstract Syntax Tree (AST)
     pub fn parse_sql(dialect: &dyn Dialect, sql: &str) -> Result<Vec<Statement>, ParserError> {
         let mut tokenizer = Tokenizer::new(dialect, sql);
-        let (tokens, _) = tokenizer.tokenize()?;
-        let mut parser = Parser::new(tokens, dialect);
+        let (tokens, pos_map) = tokenizer.tokenize()?;
+        let mut parser = Parser::new(tokens, dialect, pos_map);
         let mut stmts = Vec::new();
         let mut expecting_statement_delimiter = false;
         debug!("Parsing sql '{}'...", sql);
@@ -2608,7 +2616,18 @@ impl<'a> Parser<'a> {
             self.expect_token(&Token::RParen)?;
             SetExpr::Query(Box::new(subquery))
         } else if self.parse_keyword(Keyword::VALUES) {
-            SetExpr::Values(self.parse_values()?)
+            // SetExpr::Values(self.parse_values()?)
+            self.prev_token();
+            let values_token = self.peek_token();
+            self.next_token();
+
+            let values_idx = self.index - 1;
+            let start = self.get_token_end_position(values_idx, &values_token)?;
+
+            // Skip and get the end of values
+            let end = self.parse_stream_values_end(start)?;
+
+            SetExpr::Values(StreamValues { start, end })
         } else {
             return self.expected(
                 "SELECT, VALUES, or a subquery in the query body",
@@ -3543,14 +3562,78 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub fn parse_values(&mut self) -> Result<Values, ParserError> {
+    pub fn parse_values(&mut self) -> Result<ExprValues, ParserError> {
         let values = self.parse_comma_separated(|parser| {
             parser.expect_token(&Token::LParen)?;
             let exprs = parser.parse_comma_separated(Parser::parse_expr)?;
             parser.expect_token(&Token::RParen)?;
             Ok(exprs)
         })?;
-        Ok(Values(values))
+        Ok(ExprValues(values))
+    }
+
+    pub fn parse_stream_values_end(
+        &mut self,
+        start: QueryOffset,
+    ) -> Result<QueryOffset, ParserError> {
+        println!("first:{:?}", self.peek_token());
+        // Empty values --- 'values ;'
+        if self.peek_token() != Token::LParen {
+            return Ok(start);
+        }
+
+        // 'values (1,1),(3,2),(3,3)'
+        self.skip_values()?;
+
+        // move to ')'
+        self.prev_token();
+        assert_eq!(self.peek_token(), Token::RParen);
+
+        let end = self.get_token_end_position(self.index, &Token::RParen);
+        self.next_token();
+
+        // if self.peek_token() == Token::EOF {
+        //     return Ok(QueryOffset::EOF);
+        // }
+
+        // if let QueryOffset::Normal(pos) = end {
+        //     QueryOffset::Normal(pos + 1)
+        // } else {
+        //     QueryOffset::EOF
+        // };
+
+        end
+    }
+
+    pub fn skip_values(&mut self) -> Result<(), ParserError> {
+        loop {
+            self.skip_row()?;
+            let token = self.peek_token();
+            if token == Token::Comma {
+                self.next_token();
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn skip_row(&mut self) -> Result<(), ParserError> {
+        self.expect_token(&Token::LParen)?;
+        loop {
+            let token = self.peek_token();
+            if token == Token::RParen {
+                println!("skip: {:?}", Token::RParen);
+                self.next_token();
+                break;
+            } else {
+                println!("rpattern: {:?}", token);
+                self.next_token();
+            }
+        }
+
+        Ok(())
     }
 
     pub fn parse_start_transaction(&mut self) -> Result<Statement, ParserError> {
@@ -3661,6 +3744,25 @@ impl<'a> Parser<'a> {
             statement,
         })
     }
+
+    fn get_token_end_position(
+        &self,
+        idx: usize,
+        expected: &Token,
+    ) -> Result<QueryOffset, ParserError> {
+        println!("pos_map:{:?}", self.position_map);
+        let token_with_position = self.position_map.get(&idx).ok_or_else(|| {
+            ParserError::ParserError(format!("{} to position not exists, idx: {}", expected, idx))
+        })?;
+        let token = token_with_position.token.clone();
+        let end = token_with_position.end;
+
+        if &token != expected {
+            self.expected(&format!("{}", expected), token)
+        } else {
+            Ok(end)
+        }
+    }
 }
 
 impl Word {
@@ -3695,6 +3797,81 @@ mod tests {
             assert_eq!(parser.next_token(), Token::EOF);
             assert_eq!(parser.next_token(), Token::EOF);
             parser.prev_token();
+        });
+    }
+
+    #[test]
+    fn test_insert_values() {
+        let sql = " insert into t values (1,2,3), (4, 5, 6), (7,8,9);";
+        all_dialects().run_parser_method(sql, |parser| {
+            parser.next_token();
+            let insert = parser.parse_insert().unwrap();
+
+            match insert {
+                Statement::Insert {
+                    or,
+                    table_name,
+                    source,
+                    ..
+                } => {
+                    assert!(or.is_none());
+                    assert_eq!(ObjectName(vec![Ident::new("t")]), table_name);
+                    assert_eq!(
+                        Some(Box::new(Query {
+                            with: None,
+                            body: SetExpr::Values(StreamValues {
+                                start: QueryOffset::Normal(21),
+                                end: QueryOffset::Normal(49),
+                            }),
+                            order_by: vec![],
+                            limit: None,
+                            offset: None,
+                            fetch: None,
+                        })),
+                        source,
+                    );
+                }
+                _ => unreachable!(),
+            }
+
+            println!("{:?}", &sql[21..49]);
+            println!("{:?}", &sql[15..40])
+        });
+    }
+
+    #[test]
+    fn test_insert_empty_values() {
+        let sql = " insert into t values ;";
+        all_dialects().run_parser_method(sql, |parser| {
+            parser.next_token();
+            let insert = parser.parse_insert().unwrap();
+
+            match insert {
+                Statement::Insert {
+                    or,
+                    table_name,
+                    source,
+                    ..
+                } => {
+                    assert!(or.is_none());
+                    assert_eq!(ObjectName(vec![Ident::new("t")]), table_name);
+                    assert_eq!(
+                        Some(Box::new(Query {
+                            with: None,
+                            body: SetExpr::Values(StreamValues {
+                                start: QueryOffset::Normal(21),
+                                end: QueryOffset::Normal(21),
+                            }),
+                            order_by: vec![],
+                            limit: None,
+                            offset: None,
+                            fetch: None,
+                        })),
+                        source,
+                    );
+                }
+                _ => unreachable!(),
+            }
         });
     }
 }
