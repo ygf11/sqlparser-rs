@@ -3358,10 +3358,11 @@ impl<'a> Parser<'a> {
 
             let source = if format.is_some() {
                 None
-            } else {
+            } else { // values 拿出来
                 Some(Box::new(self.parse_query()?))
             };
 
+            // position map 里面找到 on duplicate key update/semicomma
             let on = if self.parse_keyword(Keyword::ON) {
                 self.expect_keyword(Keyword::DUPLICATE)?;
                 self.expect_keyword(Keyword::KEY)?;

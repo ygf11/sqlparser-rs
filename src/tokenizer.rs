@@ -348,12 +348,42 @@ impl fmt::Display for QueryOffset {
     }
 }
 
+pub type ValuesInfo = (QueryOffset, QueryOffset);
+
+/// Help to find the end token of the values.
+/// State machine:
+///                                         comma
+///                      |<---------------------------------------|
+///                      |                                        |
+///                      |                                        |
+/// input ----------> RowStart ------------> LParen ----------> RParen ----------------> End
+///         values       |      left paren           right paren          other token
+///                      |
+///                      |--------------> Error(Fail Fast)
+///                         other token
+enum ValuesState {
+    RowStart,
+    LParen,
+    RParen,
+    End,
+}
+
+struct ValuesStateToken {
+    pub token: Token,
+    pub token_start: QueryOffset,
+    pub token_end: QueryOffset,
+    pub state: ValuesState,
+}
+
 /// SQL Tokenizer
 pub struct Tokenizer<'a> {
     dialect: &'a dyn Dialect,
     query: &'a str,
     line: u64,
     col: u64,
+
+    // help find valus end
+    values_state: Option<ValuesState>,
 }
 
 impl<'a> Tokenizer<'a> {
@@ -364,6 +394,7 @@ impl<'a> Tokenizer<'a> {
             query,
             line: 1,
             col: 1,
+            values_state: None,
         }
     }
 
@@ -378,7 +409,11 @@ impl<'a> Tokenizer<'a> {
 
         let mut position_map = HashMap::new();
 
-        while let Some(token) = self.next_token(&mut peekable, tokens.len(), &mut position_map)? {
+        let mut last_token_end_pos = 0usize;
+
+        // let mut values_state = None;
+
+        while let Some((token, (start, end))) = self.next_token_with_position(&mut peekable)? {
             match &token {
                 Token::Whitespace(Whitespace::Newline) => {
                     self.line += 1;
@@ -393,18 +428,118 @@ impl<'a> Tokenizer<'a> {
                 Token::AtString(s) => self.col += s.len() as u64,
                 _ => self.col += 1,
             }
-
+            // 保存values的位置
+            // 前进values状态机
             tokens.push(token);
         }
         Ok((tokens, position_map))
+    }
+
+    fn advance_values_state(
+        &self,
+        token: &Token,
+        start: QueryOffset,
+        end: QueryOffset,
+        chars: &mut Peekable<CharIndices<'_>>,
+        pos_map: &mut HashMap<usize, TokenWithPosition>,
+        values_state: &mut Option<ValuesStateToken>,
+    ) {
+        // Skip whitespace
+        if let Token::Whitespace(_) = token {
+            return;
+        }
+
+        match (token, &values_state) {
+            (Token::Word(w), None) if w.keyword == Keyword::VALUES => {
+                let new_value_state = ValuesStateToken {
+                    token: token.clone(),
+                    token_start: start,
+                    token_end: end,
+                    state: ValuesState::RowStart,
+                };
+
+                *values_state = Some(new_value_state);
+            },
+            (Token::Word(w), Some(_)) if w.keyword == Keyword::VALUES => {
+                // fallback to expr
+                unreachable!()
+            },
+            _ => unreachable!(),
+        };
+
+        // Start new values
+        // if matches!(token, Token::Word(w) if w.keyword == Keyword::VALUES) && values_state.is_none()
+        // {
+        //     let new_value_state = ValuesStateToken {
+        //         token: token.clone(),
+        //         token_start: start,
+        //         token_end: end,
+        //         state: ValuesState::RowStart,
+        //     };
+
+        //     *values_state = Some(new_value_state);
+        //     return;
+        // }
+
+        // let next_state = match values_state.unwrap().state {
+        //     ValuesState::RowStart => {
+        //         if token == &Token::LParen {
+        //             ValuesState::LParen;
+        //         } else {
+        //             // Empty values
+        //             ValuesState::End;
+
+        //             // save position
+        //         }
+        //     }
+        //     ValuesState::LParen => {
+        //         if token == &Token::RParen {
+        //             ValuesState::RParen;
+        //         } else {
+        //             ValuesState::LParen;
+        //             // error
+        //         }
+        //     }
+        //     ValuesState::RParen => {
+        //         if token == &Token::Comma {
+        //             ValuesState::RowStart;
+        //         } else {
+        //             // save position
+        //         }
+        //     }
+        //     ValuesState::End => {
+        //         if matches!(token, Token::Word(w) if w.keyword == Keyword::VALUES) {
+        //             *values_state = ValuesState::RowStart;
+        //         }
+        //     }
+        // }
+    }
+
+    /// Record the token's position. It is a wrapper of next_token().
+    /// For the start and end, it is a left closed and right open interval, like [start, end).
+    fn next_token_with_position(
+        &mut self,
+        chars: &mut Peekable<CharIndices<'_>>,
+    ) -> Result<Option<(Token, ValuesInfo)>, TokenizerError> {
+        let start = get_current_idx(chars);
+        if start == QueryOffset::EOF {
+            return Ok(None);
+        }
+
+        let token = self.next_token(chars)?;
+        if let Some(token) = token {
+            let end = get_current_idx(chars);
+            Ok(Some((token, (start, end))))
+        } else {
+            // reach eof
+            Ok(None)
+        }
     }
 
     /// Get the next token or return None
     fn next_token(
         &self,
         chars: &mut Peekable<CharIndices<'_>>,
-        token_idx: usize,
-        position_map: &mut HashMap<usize, TokenWithPosition>,
     ) -> Result<Option<Token>, TokenizerError> {
         //println!("next_token: {:?}", chars.peek());
         match chars.peek() {
@@ -469,16 +604,16 @@ impl<'a> Tokenizer<'a> {
                             return Ok(Some(Token::Number(s, false)));
                         }
 
-                        let token = Token::make_word(&s, None);
-                        Self::save_token_position(
-                            position_map,
-                            &token,
-                            token_idx,
-                            chars,
-                            pos as u64,
-                        );
+                        // let token = Token::make_word(&s, None);
+                        // Self::save_token_position(
+                        //     position_map,
+                        //     &token,
+                        //     token_idx,
+                        //     chars,
+                        //     pos as u64,
+                        // );
 
-                        Ok(Some(token))
+                        Ok(Some(Token::make_word(&s, None)))
                     }
                     // string
                     '\'' => {
@@ -549,18 +684,7 @@ impl<'a> Tokenizer<'a> {
                     }
                     // punctuation
                     '(' => self.consume_and_return(chars, Token::LParen),
-                    ')' => {
-                        let token = Token::RParen;
-                        let _ = chars.next();
-                        Self::save_token_position(
-                            position_map,
-                            &token,
-                            token_idx,
-                            chars,
-                            pos as u64,
-                        );
-                        Ok(Some(token))
-                    }
+                    ')' => self.consume_and_return(chars, Token::RParen),
                     ',' => self.consume_and_return(chars, Token::Comma),
                     // operators
                     '-' => {
@@ -676,18 +800,7 @@ impl<'a> Tokenizer<'a> {
                             _ => Ok(Some(Token::Colon)),
                         }
                     }
-                    ';' => {
-                        let token = Token::SemiColon;
-                        let _ = chars.next();
-                        Self::save_token_position(
-                            position_map,
-                            &token,
-                            token_idx,
-                            chars,
-                            pos as u64,
-                        );
-                        Ok(Some(token))
-                    }
+                    ';' => self.consume_and_return(chars, Token::SemiColon),
                     '\\' => self.consume_and_return(chars, Token::Backslash),
                     '[' => self.consume_and_return(chars, Token::LBracket),
                     ']' => self.consume_and_return(chars, Token::RBracket),
@@ -870,6 +983,13 @@ impl<'a> Tokenizer<'a> {
         Ok(Some(t))
     }
 
+    fn try_save_values_info(
+        values_map: &mut HashMap<usize, ValuesInfo>,
+        values_idx: usize,
+        values_info: ValuesInfo,
+    ) {
+    }
+
     /// Save token-idx to its position in a map.
     /// Current only support save Values.
     fn save_token_position(
@@ -916,6 +1036,13 @@ fn peeking_take_while(
     }
 
     s
+}
+
+fn get_current_idx(chars: &mut Peekable<CharIndices<'_>>) -> QueryOffset {
+    match chars.peek() {
+        Some((idx, _)) => QueryOffset::Normal(*idx as u64),
+        None => QueryOffset::EOF,
+    }
 }
 
 #[cfg(test)]
